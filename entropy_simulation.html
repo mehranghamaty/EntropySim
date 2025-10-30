@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entropy Simulation</title>
+  <style>
+    body {
+      background: #181818;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    h1 {
+      margin-bottom: 10px;
+    }
+    #canvas {
+      border: 2px solid #fff;
+      background: #222;
+      margin-bottom: 20px;
+    }
+    #controls {
+      margin-bottom: 10px;
+    }
+    button {
+      background: #444;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      margin: 0 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1em;
+    }
+    button:hover {
+      background: #666;
+    }
+  </style>
+</head>
+<body>
+  <h1>Entropy Simulation</h1>
+  <div id="controls">
+    <button onclick="startSim()">Start</button>
+    <button onclick="pauseSim()">Pause</button>
+    <button onclick="resetSim()">Reset</button>
+  <button id="recordBtn" onclick="toggleRecording()">Record</button>
+  <button id="saveBtn" onclick="saveRecording()" disabled>Save Recording</button>
+  </div>
+  <canvas id="canvas" width="400" height="400"></canvas>
+  <div style="margin-bottom:10px;">
+    <span>Entropy: <span id="entropyValue">0</span></span>
+  </div>
+  <p>Watch as particles move randomly, increasing entropy (disorder) over time. Now entropy can also decrease!</p>
+  <!-- No external script needed for direct WebM recording -->
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const gridSize = 20; // 20x20 grid
+    const cellSize = canvas.width / gridSize;
+    let particles = [];
+    let running = false;
+    let animationId;
+    let entropy = 0;
+  let entropyDecrease = false;
+  let entropyDecreaseRate = 0.0; // Start at 0, will ramp up quickly
+  let entropyDecreaseTimer = 0;
+
+    // Recording
+    let mediaRecorder;
+    let recordedChunks = [];
+    let isRecording = false;
+
+    function initParticles() {
+      particles = [];
+      // Only fill a small block in the top-left (low entropy)
+      for (let i = 0; i < gridSize / 4; i++) {
+        for (let j = 0; j < gridSize / 4; j++) {
+          particles.push({ x: i, y: j, color: randomColor() });
+        }
+      }
+    }
+
+    function randomColor() {
+      const colors = ['#FFD700', '#00BFFF', '#FF69B4', '#ADFF2F', '#FF4500'];
+      return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    function drawGrid() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const p of particles) {
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x * cellSize, p.y * cellSize, cellSize, cellSize);
+      }
+    }
+
+    function moveParticles() {
+      for (const p of particles) {
+        let dir;
+        if (entropyDecrease && Math.random() < entropyDecreaseRate) {
+          // Strongly bias toward (0,0):
+          // If not at (0,0), always move closer (left or up)
+          if (p.x > 0 && (p.x >= p.y || p.y === 0)) dir = 0; // left
+          else if (p.y > 0) dir = 2; // up
+          else dir = 4; // stay
+        } else {
+          dir = Math.floor(Math.random() * 5);
+        }
+        let nx = p.x, ny = p.y;
+        if (dir === 0 && p.x > 0) nx--;
+        else if (dir === 1 && p.x < gridSize - 1) nx++;
+        else if (dir === 2 && p.y > 0) ny--;
+        else if (dir === 3 && p.y < gridSize - 1) ny++;
+        // Check if another particle is already there
+        if (!particles.some(other => other !== p && other.x === nx && other.y === ny)) {
+          p.x = nx;
+          p.y = ny;
+        }
+      }
+    }
+
+    function calculateEntropy() {
+      // Entropy = normalized average distance from (0,0)
+      let total = particles.length;
+      let sumDist = 0;
+      const maxDist = Math.sqrt((gridSize-1)**2 + (gridSize-1)**2);
+      for (const p of particles) {
+        let dist = Math.sqrt(p.x * p.x + p.y * p.y);
+        sumDist += dist;
+      }
+      let avgDist = sumDist / total;
+      return avgDist / maxDist;
+    }
+
+    function updateEntropyDisplay() {
+      entropy = calculateEntropy();
+      document.getElementById('entropyValue').textContent = entropy.toFixed(3);
+    }
+
+    function animate() {
+      if (!running) return;
+      moveParticles();
+      drawGrid();
+      updateEntropyDisplay();
+      // Gradually enable entropy decrease after some time
+      if (!entropyDecrease) {
+        entropyDecreaseTimer++;
+        if (entropyDecreaseTimer > 300) { // after ~5s at 60fps
+          entropyDecrease = true;
+        }
+      }
+      // Rapidly ramp up bias to order
+      if (entropyDecrease && entropyDecreaseRate < 0.98) {
+        entropyDecreaseRate += 0.01; // much faster increase
+        if (entropyDecreaseRate > 0.98) entropyDecreaseRate = 0.98;
+      }
+      animationId = requestAnimationFrame(animate);
+    }
+
+    function startSim() {
+      if (!running) {
+        running = true;
+        animate();
+      }
+    }
+
+    function pauseSim() {
+      running = false;
+      cancelAnimationFrame(animationId);
+    }
+
+    function resetSim() {
+      running = false;
+      cancelAnimationFrame(animationId);
+      initParticles();
+      drawGrid();
+      updateEntropyDisplay();
+      entropyDecrease = false;
+      entropyDecreaseRate = 0.0;
+      entropyDecreaseTimer = 0;
+    }
+
+    // --- Recording functions ---
+    function toggleRecording() {
+      const recordBtn = document.getElementById('recordBtn');
+      const saveBtn = document.getElementById('saveBtn');
+      if (!isRecording) {
+        recordedChunks = [];
+        const stream = canvas.captureStream(30); // 30fps
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        mediaRecorder.ondataavailable = function(e) {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = function() {
+          // Enable save button and highlight it
+          saveBtn.disabled = false;
+          saveBtn.style.background = '#2ecc40';
+          saveBtn.style.color = '#fff';
+        };
+        mediaRecorder.start();
+        isRecording = true;
+        // Visual indicator
+        recordBtn.textContent = 'Stop Recording';
+        recordBtn.style.background = '#c00';
+        recordBtn.style.color = '#fff';
+      } else {
+        mediaRecorder.stop();
+        isRecording = false;
+        // Visual indicator
+        recordBtn.textContent = 'Record';
+        recordBtn.style.background = '';
+        recordBtn.style.color = '';
+      }
+    }
+
+    function saveRecording() {
+      const saveBtn = document.getElementById('saveBtn');
+      if (isRecording) {
+        // If still recording, stop first
+        mediaRecorder.stop();
+        isRecording = false;
+        document.getElementById('recordBtn').textContent = 'Record';
+        document.getElementById('recordBtn').style.background = '';
+        document.getElementById('recordBtn').style.color = '';
+      }
+      setTimeout(() => {
+        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'entropy_simulation.webm';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
+        // Reset save button style
+        saveBtn.disabled = true;
+        saveBtn.style.background = '';
+        saveBtn.style.color = '';
+      }, 500);
+    }
+
+    // Initialize
+    initParticles();
+    drawGrid();
+    updateEntropyDisplay();
+  </script>
+</body>
+</html>
